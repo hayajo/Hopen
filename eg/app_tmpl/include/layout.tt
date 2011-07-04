@@ -1,0 +1,56 @@
+<html>
+	<head>
+		<link href="[% hopen.base_uri %]static/js/facebox/facebox.css" media="screen" rel="stylesheet" type="text/css"/>
+		<script type="text/javascript" src="[% hopen.base_uri %]static/js/jquery.1.4.2.min.js"></script>
+		<script type="text/javascript" src="[% hopen.base_uri %]static/js/facebox/facebox.js"></script>
+		<script>
+			$(document).ready(function($) { $('a[rel*=facebox]').facebox() });
+		</script>
+		<title>Sample - Hopen</title>
+	</head>
+	<body>
+		<h1><a href="[% hopen.base_uri %]"><img src="[% hopen.base_uri %]static/img/logo.png" style="border:none;"/></a></h1>
+		<div id="menu" style="display:none;">
+			<dl>
+				<dt><a href="/">変数出力</a></dt>
+				<dd>内部変数を表示するデモです。</dd>
+				<dt><a href="/raw">直出力</a></dt>
+				<dd>リターンデータを直接を扱うデモです。</dd>
+				<dt><a href="/basic_template">coderefをマッピングせずに出力を直接指定（テンプレート）</a></dt>
+				<dd>URLにcoderefをマッピングせず、テンプレートのデータのみを出力するデモです。</dd>
+				<dt><a href="/basic_str">coderefをマッピングせずに出力を直接指定（文字列）</a></dt>
+				<dd>URLにcoderefをマッピングせず、文字列を出力するデモです。</dd>
+				<dt><a href="/redirect">リダイレクト</a></dt>
+				<dd>リダイレクトするデモです。</dd>
+				<dt><a href="/encoding">文字エンコーディング指定</a></dt>
+				<dd>文字エンコーディングを指定して出力するデモです。</dd>
+				<dt><a href="/params/demo_id">パラメータ出力</a></dt>
+				<dd>URLパラメータ ( /params/:id ) を表示するデモです。</dd>
+				<dt><a href="/params-regexp/demo_param1/demo_param2">パラメータ出力（正規表現）</a></dt>
+				<dd>URLパラメータ ( /params-regexp/([^/]+)/(\w+) ) を表示するデモです。</dd>
+				<dt><a href="/url-params">GETパラメータ出力</a></dt>
+				<dd>GETパラメータを表示するデモです。</dd>
+				<dt><a href="/session">セッション</a></dt>
+				<dd>セッションを扱うデモです。</dd>
+				<dt><a href="/cookies">クッキー</a></dt>
+				<dd>クッキーを扱うデモです。</dd>
+				<dt><a href="/upload">ファイルアップロード</a></dt>
+				<dd>ファイルアップロードのデモです。</dd>
+				<dt><a href="/template">外部テンプレート</a></dt>
+				<dd>外部テンプレートを表示するデモです。</dd>
+				<dt><a href="/db">データベース</a></dt>
+				<dd>データベースを扱うデモです。</dd>
+				<dt><a href="/json">JSON</a></dt>
+				<dd>application/jsonを出力するデモです。</dd>
+				<dt><a href="/exception">例外処理</a></dt>
+				<dd>例外が発生した場合のデモです。</dd>
+			</dl>
+		</div>
+		<div>
+			<a href="#menu" rel="facebox">メニュー</a>
+		</div>
+		<div id="container">
+			[% content %]
+		</div>
+	</body>
+</html>

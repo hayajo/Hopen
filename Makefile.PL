@@ -1,7 +1,7 @@
 use strict;
 use warnings;
 use inc::Module::Install;
-all_from 'lib/Hopen.pm';
+reference_module 'lib/Hopen.pm';
 requires 'Data::Section::Simple';
 requires 'DBI';
 requires 'DBIx::TransactionManager';

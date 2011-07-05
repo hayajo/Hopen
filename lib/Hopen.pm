@@ -2,8 +2,8 @@ package Hopen;
 
 use strict;
 use warnings;
-
-our $VERSION = '0.01';
+use 5.008_001;
+our $VERSION = '0.02';
 
 use Carp ();
 use Data::Section::Simple ();

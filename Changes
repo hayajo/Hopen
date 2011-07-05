@@ -1,4 +1,7 @@
 Revision history for Perl extension Hopen
 
-0.01  Mon Jul 04 23 15:43:36 2011
+0.02  Tue Jul  5 11:52:58 JST 2011
+        - added perl version
+
+0.01  Mon Jul  4 15:43:36 JST 2011
         - original version

@@ -26,4 +26,4 @@ hopen;
 __DATA__
 
 @@ hello.tt
-<html><head><title>[% title %]</head><body>[DATA] Hello [% name %]!</body></html>
+<html><head><title>[% title %]</title></head><body>[DATA] Hello [% name %]!</body></html>

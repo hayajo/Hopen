@@ -8,10 +8,13 @@ BEGIN { $ENV{PLACK_ENV} = 'development' }
 my $app = do {
     use Hopen;
     get '/xml' => sub {
-        render(
+        my $c = shift;
+        $c->render(
             'xml',
             {},
-            content_type => 'application/xml'
+            headers => {
+                'Content-Type' => 'application/xml'
+            },
         );
     };
     hopen;
@@ -23,6 +26,8 @@ my $app = do {
         PATH_INFO      => '/xml',
         HTTP_HOST      => 'localhost',
     });
+
+    chomp($res->[2][0]);
 
     is_deeply(
         $res,

@@ -1,5 +1,9 @@
 Revision history for Perl extension Hopen
 
+0.03  Tue Aug 13 23:45:58 JST 2011
+        - Clone of Amon2::Lite
+        - ほぼ写経なのでオリジナルをご利用ください
+
 0.02  Tue Jul  5 11:52:58 JST 2011
         - added perl version
 

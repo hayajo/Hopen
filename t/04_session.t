@@ -7,15 +7,19 @@ BEGIN { $ENV{PLACK_ENV} = 'development' }
 
 my $app = do {
     use Hopen;
-    builder { enable 'Session', store => 'File' };
+    use Plack::Builder;
+    load_plugins('Hopen::Plugin::Session');
     get '/' => sub {
-        session(shift)->set('file', __FILE__);
-        'set session'
+        $_[0]->session->set('file', __FILE__);
+        'set session';
     };
     get '/sess' => sub {
-        session(shift)->get('file');
+        $_[0]->session->get('file');
     };
-    hopen;
+    builder {
+        enable 'Session', store => 'File';
+        hopen;
+    };
 };
 
 my $sess_key = '';

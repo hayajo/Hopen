@@ -1,3 +1,0 @@
-[% WRAPPER 'include/layout.tt' %]
-Hello [% name %]!
-[% END %]

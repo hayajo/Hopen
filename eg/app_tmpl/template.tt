@@ -1,7 +1,0 @@
-[% WRAPPER "include/layout.tt" %]
-<h2>外部テンプレート</h2>
-<p>これは外部テンプレートからの出力です。</p>
-<p>BASE: [% setting('base_uri') %]</p>
-<p>BASE_DIR: [% setting('base_dir') %]</p>
-<p>TEMPLATE_DIR: [% dump( setting('template').path ) %]</p>
-[% END %]

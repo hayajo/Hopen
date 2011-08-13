@@ -1,0 +1,11 @@
+<!DOCTYPE HTML>
+<html lang="en">
+<head>
+  <meta charset="[% c().encoding %]">
+  <title>[% title %] - Hopen</title>
+</head>
+<body>
+  <div id="main">[% content %]</div>
+  <div id="footer">Powered by Hopen</div>
+</body>
+</html>

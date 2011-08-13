@@ -7,7 +7,7 @@ BEGIN { $ENV{PLACK_ENV} = 'development' }
 
 my $app = do {
     use Hopen;
-    get '/' => 'index';
+    get '/' => 'Hello';
     hopen;
 };
 
@@ -22,8 +22,3 @@ my $app = do {
 }
 
 done_testing;
-
-__DATA__
-
-@@ index
-Hello

@@ -3,237 +3,22 @@ package Hopen;
 use strict;
 use warnings;
 use 5.008_001;
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use Carp ();
 use Data::Section::Simple ();
-use DBI;
-use DBIx::TransactionManager;
-use Encode ();
 use File::Basename qw/dirname/;
 use File::Spec;
-use Plack::Builder ();
 use Plack::Request;
-use Plack::Response;
-use Plack::Util;
 use Router::Simple;
-use Scope::Container ();
 use Text::Xslate;
+use Data::OptList;
 
-my $_ROUTER   = Router::Simple->new;
-my $_BUILDER  = sub {};
-my $_CONFIG   = {};
-my $_SETTINGS = {};
-my ($_DATA, $_VIEW);
+my $_COUNTER;
 
-sub set { &setting(@_) }
-sub setting {
-    if (@_ == 1) {
-        my $key = $_[0];
-        my $val = $_SETTINGS->{ $key };
-        return (defined $val) ? $val : $_CONFIG->{ $key }
-    } elsif ( @_ > 1 ) {
-        Carp::croak "Odd number in 'set' assignment"
-                unless scalar @_ % 2 == 0;
-        my $i = 0;
-        while (my $key = shift) {
-            $_SETTINGS->{ $key } = shift;
-            $i++;
-        }
-        return $i;
-    }
-    return { %$_CONFIG, %$_SETTINGS };
-}
-
-sub get_data_section {
-    my $data_section = $_DATA->get_data_section;
-    map { chomp $data_section->{$_} } keys %$data_section;
-    $data_section;
-}
-
-sub router2app {
-    $_CONFIG = { @_ };
-    my $app = sub {
-        my $env = shift;
-        my $req = Plack::Request->new($env);
-        set 'base_uri' => $req->base;
-        if (my $p = $_ROUTER->match($env)) {
-            my $code = $p->{action};
-            if (ref $code eq 'CODE') {
-                my %params = %$p;
-                delete $params{action}; # TODO:
-                my $res = &$code($req, \%params);
-                return (ref $res eq 'ARRAY') ? $res
-                                             : make_response($res);
-            }
-            render($code);
-        } else {
-            return [
-                404,
-                ['Content-Type' => 'text/plain'],
-                ['not found'],
-            ];
-        }
-    };
-    Plack::Builder::builder {
-        # perpetuation per-request.
-        # via. Plack::Middleware::Scope::Container
-        Plack::Builder::enable sub {
-            my $app = shift;
-            sub {
-                my $container = Scope::Container::start_scope_container();
-                $app->(shift);
-            };
-        };
-        $_BUILDER->();
-        $app;
-    };
-}
-
-sub any {
-    if (@_ == 3) {
-        my ($methods, $pattern, $code) = @_;
-        $_ROUTER->connect(
-            $pattern,
-            { action => $code },
-            { method => [ map { uc $_ } @$methods ] },
-        );
-    } else {
-        my ($pattern, $code) = @_;
-        $_ROUTER->connect(
-            $pattern,
-            { action => $code },
-        );
-    }
-}
-
-sub get {
-    any(['GET', 'HEAD'], $_[0], $_[1]);
-}
-
-sub post {
-    any(['POST'], $_[0], $_[1]);
-}
-
-sub redirect {
-    return [
-        302,
-        [ 'Location' => shift ],
-        [],
-    ]
-}
-
-sub builder(&) {
-    my $block = shift;
-    $_BUILDER = $block;
-}
-
-sub make_response {
-    my ($body, %opts) = @_;
-    [
-        $opts{code} || 200,
-        [ 'Content-Type' => $opts{content_type} || 'text/plain' ],
-        [ Encode::encode($opts{encoding} || 'utf8', $body) ],
-    ];
-}
-
-sub view {
-    my $opts = { @_ };
-    return $_VIEW if (defined $_VIEW);
-    my $data_section = get_data_section();
-    set 'template' => {
-        'syntax' => 'TTerse',
-        'module' => [ 'Text::Xslate::Bridge::TT2Like' ],
-        'path'   => [ File::Spec->catdir(setting('base_dir'), 'views'), $data_section ],
-        %{
-            my $opts = setting('template') || {};
-            if (exists $opts->{path}) { # relative-path convert to absolute-path
-                my @path_abs = map { ref($_) ? $_ : File::Spec->rel2abs($_, setting('base_dir')) }
-                    (ref($opts->{path}) eq 'ARRAY') ? @{ $opts->{path} } : $opts->{path};
-                $opts->{path} = [ @path_abs, $data_section ];
-            }
-            $opts->{function} ||= {};
-            $opts->{function}->{hopen_setting} = sub {
-                my $key = shift;
-                ($key) ? Hopen::setting($key) : Hopen::setting(); # read only
-            };
-            $opts;
-        },
-    };
-    ( $_VIEW = Text::Xslate->new(setting('template')) );
-}
-
-sub render {
-    my ($name, $vars, %opts) = @_;
-    $vars ||= {};
-    $vars->{hopen} = { %$_CONFIG, %$_SETTINGS };
-
-    my $body;
-    if (ref $name eq 'ARRAY') {
-        $body = view->render_string($name->[0], $vars);
-    } else {
-        $body = view->render($name, $vars);
-    }
-
-    make_response(
-        $body,
-        content_type => 'text/html; charset=utf8',
-        %opts
-    );
-}
-
-sub db {
-    # perpetuation per-request.
-    if ( Scope::Container::in_scope_container
-         && (my $dbh = Scope::Container::scope_container('hopen.db')) ) {
-        return $dbh;
-    }
-    my ($dsn, $username, $password, $attr) = @_ || @{ setting('database') };
-    $attr ||= { PrintError => 1, AutoCommit => 1, RaiseError => 0 };
-    if ($dsn =~ /^dbi:SQLite:/) {
-        $attr->{sqlite_unicode} = 1 unless exists $attr->{sqlite_unicode};
-    } elsif ($dsn =~ /^dbi:mysql:/) {
-        $attr->{mysql_enable_utf8} = 1 unless exists $attr->{mysql_enable_utf8};
-    }
-    my $dbh = DBI->connect($dsn, $username, $password, $attr);
-    { # implement DBIx::TransactionManager::ScopeGuard features
-        no strict 'refs';
-        *{ ref($dbh) . '::_txn_manager'} = sub {
-            my $self = shift;
-            if (!defined $self->{private_txn_manager}) {
-                $self->{private_txn_manager} = DBIx::TransactionManager->new($self);
-            }
-            $self->{private_txn_manager};
-        };
-        *{ ref($dbh) . '::txn_scope'} = sub {
-            $_[0]->_txn_manager->txn_scope(caller => [caller(0)]);
-        };
-    }
-    return (Scope::Container::in_scope_container)
-        ? Scope::Container::scope_container('hopen.db', $dbh)
-        : $dbh;
-}
-
-sub session {
-    my $req = shift;
-    Carp::croak 'Invalid argument'
-            unless (ref($req) eq 'Plack::Request');
-    Carp::croak 'Plack::Middleware::Session is disabled'
-            unless ($req->env->{'psgix.session'});
-    require Plack::Session;
-    Plack::Session->new($req->env);
-}
-
-sub run {
-    require Plack::Runner;
-    my $runner = Plack::Runner->new;
-    $runner->parse_options(@ARGV);
-    $runner->run( &router2app(@_) );
-}
-
-sub run_as_cgi {
-    require Plack::Handler::CGI;
-    Plack::Handler::CGI->new->run( &router2app(@_) );
+{
+    our $_CONTEXT; # localize this variable per request
+    sub context { $_CONTEXT }
 }
 
 sub import {
@@ -241,29 +26,162 @@ sub import {
     warnings->import;
 
     no strict "refs";
-    no warnings "redefine";
 
+    my $router = Router::Simple->new();
     my ($caller, $filename) = caller;
-    set 'base_dir' => File::Spec->rel2abs(dirname($filename));
-    $_DATA = Data::Section::Simple->new($caller);
 
-    my @functions = qw/any get post redirect render session db set setting builder make_response/;
-    for (@functions) {
-        *{"${caller}\::$_"} = \&$_;
+    my $base_class = __PACKAGE__.'::__child__'.$_COUNTER++;
+    {
+        no warnings;
+        unshift @{ "$base_class\::ISA" }, (__PACKAGE__, 'Hopen::Context');
+        unshift @{ "$caller\::ISA" }, $base_class;
     }
-    # import from Plack::Builder
-    for (qw/enable enable_if/) {
-        *{"${caller}\::$_"} = *{"Plack\::Builder\::$_"};
-    }
-    *{"${caller}::response"} = sub { Plack::Response->new(@_) };
 
-    if ($ENV{'PLACK_ENV'}) {
-        *{"${caller}\::hopen"} = \&router2app;
-    } else {
-        *{"${caller}\::hopen"} = sub { run(@_) };
-        *{"${caller}\::hopen"} = sub { run_as_cgi(@_) }
-            if $filename =~ /\.cgi$/;
-    }
+    my $base_dir = File::Spec->rel2abs( dirname($filename) );
+    *{ "$caller\::base_dir" } = sub { $base_dir };
+
+    *{ "$caller\::router" } = sub { $router };
+
+    *{ "$caller\::any" } = sub {
+        if (@_ == 3) {
+            my ($methods, $pattern, $code) = @_;
+            $router->connect(
+                $pattern,
+                { __code => $code },
+                { method => [ map { uc $_ } @$methods ] },
+            );
+        } else {
+            my ($pattern, $code) = @_;
+            $router->connect( $pattern, { __code => $code } );
+        }
+    };
+    *{ "$caller\::get" } = sub {
+        $router->connect($_[0], {__code => $_[1]}, {method => ['GET','HEAD']});
+    };
+    *{ "$caller\::post" } = sub {
+        $router->connect($_[0], {__code => $_[1]}, {method => ['POST']});
+    };
+
+    *{ "$caller\::load_plugins" } = sub {
+        my @args = @_;
+        for my $opt (@{ Data::OptList::mkopt(\@args) }) {
+            my ($module, $params) = ($opt->[0], $opt->[1]);
+            $module = Plack::Util::load_class($module);
+            $module->init($caller, $params);
+        }
+    };
+
+    *{ "${base_class}\::config" } = sub {
+        my $class = shift;
+        my %config = (@_ == 1) ? %{$_[0]} : @_;
+        no warnings 'redefine';
+        *{"$caller\::config"} = sub { \%config };
+        \%config;
+    };
+
+    *{ "$caller\::hopen" } = sub {
+        $caller->config(@_);
+        my $app = sub {
+            my $env = shift;
+            my $req = Plack::Request->new($env);
+            my $self = $caller->new($req);
+            no warnings 'redefine';
+            local $Hopen::_CONTEXT = $self;
+            if (my $p = $router->match($env)) {
+                my $code = $p->{__code};
+                if (ref $code eq 'CODE') {
+                    my $res = &$code($self, $p);
+                    return (ref $res eq 'ARRAY') ? $res
+                                                 : $self->render([$res]);
+                }
+                return $self->render([$code]);
+            }
+            $self->res_404;
+        };
+        $app;
+    };
+
+    *{ "${base_class}\::view" } = sub {
+        my $vpath = Data::Section::Simple->new($caller)->get_data_section() || +{};
+        my $config = $caller->config->{'Text::Xslate'} || +{};
+        my $xs_opts = +{
+            'syntax' => 'TTerse',
+            'module' => [ 'Text::Xslate::Bridge::TT2Like' ],
+            'path'   => [ $vpath, File::Spec->catdir($caller->base_dir, 'views') ],
+            'function' => {},
+            %$config,
+        };
+        $xs_opts->{function}->{c} = sub { Hopen->context() };
+        my $xs = Text::Xslate->new($xs_opts);
+        no warnings 'redefine';
+        *{ "$caller\::view" } = sub { $xs };
+        $xs;
+    };
+
+}
+
+package Hopen::Context;
+
+use Encode ();
+
+sub new {
+    my ($class, $req) = @_;
+    Carp::croak '$req is required'
+        unless defined $req && ref($req) eq 'Plack::Request';
+    bless {
+        encoding => 'utf-8',
+        req      => $req,
+    }, ref $class || $class;
+}
+
+sub view { die "This is abstract method: view" }
+sub config { die "This is abstract method: config" }
+
+sub encoding {
+    my $self = shift;
+    $self->{encoding} = shift if (@_);
+    $self->{encoding};
+}
+
+sub request { $_[0]->{req} }
+sub req     { $_[0]->{req} }
+
+sub create_response { shift->req->new_response(@_) }
+
+sub redirect {
+    my ($self, $url, $status) = @_;
+    my $res = $self->create_response;
+    $res->redirect($url, $status);
+    $res->finalize;
+}
+
+sub res_404 {
+    my $self = shift;
+    $self->create_response(
+        404,
+        { 'Content-Type' => 'text/plain' },
+        "not found"
+    )->finalize;
+}
+
+sub render {
+    my $self = shift;
+    my ($tmpl, $vars, %opts) = @_;
+
+    my $body = (ref $tmpl eq 'ARRAY')
+        ? $self->view->render_string($tmpl->[0], $vars)
+        : $self->view->render($tmpl, $vars);
+
+    $self->create_response(
+        $opts{status} || 200,
+        $opts{headers} || { 'Content-Type' => 'text/html; charset=' . $self->encoding },
+        $self->encode_body($body),
+    )->finalize;
+}
+
+sub encode_body {
+    my ($self, $body) = @_;
+    ($self->encoding) ? Encode::encode($self->encoding, $body) : $body;
 }
 
 1;
@@ -276,127 +194,256 @@ Hopen - Plack based micro web application frameworks.
 
 =head1 SYNOPSIS
 
-In app.psgi
+    use strict;
+    use warnings;
 
     use Hopen;
-    builder { enable_if {$ENV{PLACK_ENV} eq 'development'} 'Debug' }; # != Plack::Builder::builder
-    get '/' => sub { render('hello.tt', { time => time }) };
+
+    get '/' => sub {
+        my $c = shift;
+        $c->render('index', { name => $c->req->param('name') || 'anonymous' });
+    };
+
     hopen;
 
-    __DATA__
+     __DATA__
 
-    @@ hello.mt
-    <h1>[% time %]: Hello World</h1>
-
-Run app.psgi
-
-    $ perl app.psgi
+    @@ index
+    <h1>Hello [% name %]</h1>
+    <form action="/">
+      name:<br />
+      <input name="name" type="text" />
+      <input type="submit" />
+    </form>
 
 =head1 DESCRIPTION
 
 Hopen is yet another micro web application framework
-using Plack, Router::Simple, Text::Xslate, and DBI.
+using Plack, Router::Simple, Text::Xslate.
 
 =head2 EXAMPLE
 
 =head3 Using tepmlate in DATA section
 
     use Hopen;
-    get '/' => 'index';
+    get '/' => sub { $_[0]->render('index') };
     hopen;
 
     __DATA__
 
     @@ index
-    <h1>(DATA)Hello Hopen</h1>
+    <h1>Hello Hopen</h1>
 
 =head3 Using tepmlate-file
 
 in app.psgi
 
+
+    use strict;
+    use warnings;
+
     use Hopen;
-    get '/' => 'eg2.tt';
+
+    get '/' => sub { $_[0]->render('eg2.tt') };
+
     hopen;
 
-in view/eg2.tt
+in views/eg2.tt
 
-    <h1>(FILE)Hello Hopen</h1>
+    <h1>Hello Hopen</h1>
 
-priority: FILE > DATA
+priority: DATA > FILE
 
 =head3 Get params and give args to template
+
+    use strict;
+    use warnings;
 
     use Hopen;
 
     get '/' => sub {
-        my ($req) = @_;
-        render('index', { name => $req->param('name') || 'anonymous' });
+        my $c = shift;
+        $c->render('index', { name => $c->req->param('name') || 'anonymous' });
     };
+
+    hopen;
+
+     __DATA__
+
+    @@ index
+    <h1>Hello [% name %]</h1>
+    <form action="/">
+      name:<br />
+      <input name="name" type="text" />
+      <input type="submit" />
+    </form>
+
+=head3 Handle post request and parse params from url path
+
+    use strict;
+    use warnings;
+
+    use Hopen;
+    use Text::Xslate qw/uri_escape/;
+
+    get '/' => sub {
+        my $c = shift;
+        my $name = $c->req->param('name') || 'anonymous';
+        $c->redirect('/hello/'.uri_escape($name));
+    };
+
+    get '/hello/:name' => sub {
+        my ($c, $args) = @_;
+        my $name = $args->{name};
+        $c->render('hello', { name => $name });
+    };
+
     hopen;
 
     __DATA__
 
-    @@ index
+    @@ hello
     <h1>Hello [% name %]</h1>
-
-=head3 Handle post request and parse params from url path
-
-    use Hopen;
-
-    ...;
-
-    get '/:name' => sub {
-        my ($req, $args) = @_;
-        my $name = $args->{name};
-        ...;
-    };
-
-    ...;
+    <form action="/">
+      name:<br />
+      <input name="name" type="text" />
+      <input type="submit" />
+    </form>
 
 =head3 Make custom response as JSON
+
+
+    use strict;
+    use warnings;
 
     use Hopen;
     use JSON;
 
-    ...;
+    get '/' => '<a href="/json">download json</a>';
 
     get '/json' => sub {
-         my ($req) = @_;
+         my $c = shift;
          my $json = JSON::to_json({
              foo => 'FOO',
              bar => 'BAR',
              buz => 'BUZ',
          });
-         make_response($json, content_type => 'application/json');
+         $c->render(
+             [ $json ],
+             {},
+             headers => [ 'Content-Type' => 'application/json' ],
+         );
     };
 
-    ...;
+    hopen;
+
+=head3 Using Session
+
+    use strict;
+    use warnings;
+
+    use Hopen;
+    use Plack::Builder;
+
+    load_plugins('Hopen::Plugin::Session');
+
+    any ['GET', 'POST'], '/' => sub {
+         my $c = shift;
+         if (uc($c->req->method) eq 'POST') {
+             if ($c->req->param('regen') && $Plack::Middleware::Session::VERSION >= 0.13) {
+                 $c->session->options->{change_id}++; # supported P::M::Session >= 0.13
+             }
+             $c->session->set('value', $c->req->param('value'));
+             return $c->redirect('/');
+         }
+         $c->render('index');
+    };
+
+    builder {
+        enable 'Session', store => 'File';
+        hopen;
+    };
+
+    __DATA__
+
+    @@ index
+    <form action="/" method="post">
+      session value<br/>
+      <input name="value" type="text" />
+      <label><input type="checkbox" name="regen" value="1"/>regenerate session</label>
+      <br/>
+      <input type="submit" />
+    </form>
+    <hr/>
+    <dl>
+      <dt>session_id</dt>
+      <dd>[% c().session.id %]</dd>
+      <dt>value</dt>
+      <dd>[% c().session.get('value') %]</dd>
+    </dl>
 
 =head3 Using Model
 
 DBI based.
 
-    use Hopen;
+    use strict;
+    use warnings;
 
-    set database => [
-        'dbi:SQLite:/tmp/hopen.db',  # dsn
-        '',                          # username
-        '',                          # password
-        {},                          # option
+    use Hopen;
+    use File::Temp qw/tempfile/;
+
+    my $conn_info = [
+        'dbi:SQLite:'.[ tempfile() ]->[1],
     ];
 
-    ...;
+    { # prepare
+        my $dbh = Hopen::DBI->connect(@$conn_info);
+        $dbh->do(q{CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, message TEXT)});
+    }
 
-    get '/list' => sub {
-         my ($req) = @_;
-         my $rows = db->selectall_arrayref(
-             q{SELECT body FROM message ORDER BY id DESC},
+    load_plugins('Hopen::Plugin::DBI');
+
+    get '/' => sub {
+         my $c = shift;
+         my $rows = $c->dbh->selectall_arrayref(
+             q{SELECT message FROM message ORDER BY id DESC},
              { Slice => {} },
          );
-         render('list', { all => $rows });
+         $c->render('list', { all => $rows });
     };
 
-    ...;
+    post '/edit' => sub {
+        my $c = shift;
+        if (my $msg = $c->req->param('message')) {
+            $c->dbh->do(
+                q{INSERT INTO message (message) VALUES (?)},
+                {},
+                $msg,
+            );
+        }
+        $c->redirect('/list');
+    };
+
+    hopen( 'DBI' => $conn_info );
+
+    __DATA__
+
+    @@ list
+    <form action="/edit" method="post">
+      message<br/>
+      <input name="message" type="text" />
+      <input type="submit" />
+    </form>
+    <hr/>
+    [%- IF all.size() -%]
+    <ul>
+      [%- WHILE (item = all.shift()) -%]
+      <li>[% item.message %]</li>
+      [%- END -%]
+    </ul>
+    [%- ELSE -%]
+    no messages
+    [%- END -%]
 
 =head1 AUTHOR
 
@@ -406,7 +453,7 @@ Hayato Imai E<lt>hayajoE<gt>
 
 L<Plack>, L<Router::Simple>, L<Text::Xslate>, L<DBI>
 
-L<Mojolicious::Lite>, L<Dancer>, L<Hitagi|https://github.com/yusukebe/Hitagi>
+L<Amon2::Lite>, L<Mojolicious::Lite>, L<Dancer>
 
 =head1 LICENSE
 

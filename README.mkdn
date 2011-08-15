@@ -1,0 +1,273 @@
+# NAME
+
+Hopen - Plack based micro web application frameworks.
+
+# SYNOPSIS
+
+    use strict;
+    use warnings;
+
+    use Hopen;
+
+    get '/' => sub {
+        my $c = shift;
+        $c->render('index', { name => $c->req->param('name') || 'anonymous' });
+    };
+
+    hopen;
+
+     __DATA__
+
+    @@ index
+    <h1>Hello [% name %]</h1>
+    <form action="/">
+      name:<br />
+      <input name="name" type="text" />
+      <input type="submit" />
+    </form>
+
+# DESCRIPTION
+
+Hopen is yet another micro web application framework
+using Plack, Router::Simple, Text::Xslate.
+
+## EXAMPLE
+
+### Using tepmlate in DATA section
+
+    use Hopen;
+    get '/' => sub { $_[0]->render('index') };
+    hopen;
+
+    __DATA__
+
+    @@ index
+    <h1>Hello Hopen</h1>
+
+### Using tepmlate-file
+
+in app.psgi
+
+
+
+    use strict;
+    use warnings;
+
+    use Hopen;
+
+    get '/' => sub { $_[0]->render('eg2.tt') };
+
+    hopen;
+
+in views/eg2.tt
+
+    <h1>Hello Hopen</h1>
+
+priority: DATA > FILE
+
+### Get params and give args to template
+
+    use strict;
+    use warnings;
+
+    use Hopen;
+
+    get '/' => sub {
+        my $c = shift;
+        $c->render('index', { name => $c->req->param('name') || 'anonymous' });
+    };
+
+    hopen;
+
+     __DATA__
+
+    @@ index
+    <h1>Hello [% name %]</h1>
+    <form action="/">
+      name:<br />
+      <input name="name" type="text" />
+      <input type="submit" />
+    </form>
+
+### Handle post request and parse params from url path
+
+    use strict;
+    use warnings;
+
+    use Hopen;
+    use Text::Xslate qw/uri_escape/;
+
+    get '/' => sub {
+        my $c = shift;
+        my $name = $c->req->param('name') || 'anonymous';
+        $c->redirect('/hello/'.uri_escape($name));
+    };
+
+    get '/hello/:name' => sub {
+        my ($c, $args) = @_;
+        my $name = $args->{name};
+        $c->render('hello', { name => $name });
+    };
+
+    hopen;
+
+    __DATA__
+
+    @@ hello
+    <h1>Hello [% name %]</h1>
+    <form action="/">
+      name:<br />
+      <input name="name" type="text" />
+      <input type="submit" />
+    </form>
+
+### Make custom response as JSON
+
+
+
+    use strict;
+    use warnings;
+
+    use Hopen;
+    use JSON;
+
+    get '/' => '<a href="/json">download json</a>';
+
+    get '/json' => sub {
+         my $c = shift;
+         my $json = JSON::to_json({
+             foo => 'FOO',
+             bar => 'BAR',
+             buz => 'BUZ',
+         });
+         $c->render(
+             [ $json ],
+             {},
+             headers => [ 'Content-Type' => 'application/json' ],
+         );
+    };
+
+    hopen;
+
+### Using Session
+
+    use strict;
+    use warnings;
+
+    use Hopen;
+    use Plack::Builder;
+
+    load_plugins('Hopen::Plugin::Session');
+
+    any ['GET', 'POST'], '/' => sub {
+         my $c = shift;
+         if (uc($c->req->method) eq 'POST') {
+             if ($c->req->param('regen') && $Plack::Middleware::Session::VERSION >= 0.13) {
+                 $c->session->options->{change_id}++; # supported P::M::Session >= 0.13
+             }
+             $c->session->set('value', $c->req->param('value'));
+             return $c->redirect('/');
+         }
+         $c->render('index');
+    };
+
+    builder {
+        enable 'Session', store => 'File';
+        hopen;
+    };
+
+    __DATA__
+
+    @@ index
+    <form action="/" method="post">
+      session value<br/>
+      <input name="value" type="text" />
+      <label><input type="checkbox" name="regen" value="1"/>regenerate session</label>
+      <br/>
+      <input type="submit" />
+    </form>
+    <hr/>
+    <dl>
+      <dt>session_id</dt>
+      <dd>[% c().session.id %]</dd>
+      <dt>value</dt>
+      <dd>[% c().session.get('value') %]</dd>
+    </dl>
+
+### Using Model
+
+DBI based.
+
+    use strict;
+    use warnings;
+
+    use Hopen;
+    use File::Temp qw/tempfile/;
+
+    my $conn_info = [
+        'dbi:SQLite:'.[ tempfile() ]->[1],
+    ];
+
+    { # prepare
+        my $dbh = Hopen::DBI->connect(@$conn_info);
+        $dbh->do(q{CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, message TEXT)});
+    }
+
+    load_plugins('Hopen::Plugin::DBI');
+
+    get '/' => sub {
+         my $c = shift;
+         my $rows = $c->dbh->selectall_arrayref(
+             q{SELECT message FROM message ORDER BY id DESC},
+             { Slice => {} },
+         );
+         $c->render('list', { all => $rows });
+    };
+
+    post '/edit' => sub {
+        my $c = shift;
+        if (my $msg = $c->req->param('message')) {
+            $c->dbh->do(
+                q{INSERT INTO message (message) VALUES (?)},
+                {},
+                $msg,
+            );
+        }
+        $c->redirect('/list');
+    };
+
+    hopen( 'DBI' => $conn_info );
+
+    __DATA__
+
+    @@ list
+    <form action="/edit" method="post">
+      message<br/>
+      <input name="message" type="text" />
+      <input type="submit" />
+    </form>
+    <hr/>
+    [%- IF all.size() -%]
+    <ul>
+      [%- WHILE (item = all.shift()) -%]
+      <li>[% item.message %]</li>
+      [%- END -%]
+    </ul>
+    [%- ELSE -%]
+    no messages
+    [%- END -%]
+
+# AUTHOR
+
+Hayato Imai <hayajo>
+
+# SEE ALSO
+
+[Plack](http://search.cpan.org/perldoc?Plack), [Router::Simple](http://search.cpan.org/perldoc?Router::Simple), [Text::Xslate](http://search.cpan.org/perldoc?Text::Xslate), [DBI](http://search.cpan.org/perldoc?DBI)
+
+[Amon2::Lite](http://search.cpan.org/perldoc?Amon2::Lite), [Mojolicious::Lite](http://search.cpan.org/perldoc?Mojolicious::Lite), [Dancer](http://search.cpan.org/perldoc?Dancer)
+
+# LICENSE
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself.

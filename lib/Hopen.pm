@@ -3,16 +3,16 @@ package Hopen;
 use strict;
 use warnings;
 use 5.008_001;
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 use Carp ();
+use Data::OptList;
 use Data::Section::Simple ();
 use File::Basename qw/dirname/;
 use File::Spec;
 use Plack::Request;
 use Router::Simple;
 use Text::Xslate;
-use Data::OptList;
 
 my $_COUNTER;
 
@@ -87,16 +87,18 @@ sub import {
             my $self = $caller->new($req);
             no warnings 'redefine';
             local $Hopen::_CONTEXT = $self;
+            my $res;
             if (my $p = $router->match($env)) {
                 my $code = $p->{__code};
-                if (ref $code eq 'CODE') {
-                    my $res = &$code($self, $p);
-                    return (ref $res eq 'ARRAY') ? $res
-                                                 : $self->render([$res]);
+               $res = (ref $code eq 'CODE') ? &$code($self, $p)
+                                            : $self->render([ $code ]);
+                unless (Scalar::Util::blessed($res) && $res->isa('Plack::Response'))  {
+                    $res = $self->render([ $res ]);
                 }
-                return $self->render([$code]);
+            } else {
+                $res = $self->res_404;
             }
-            $self->res_404;
+            return $res->finalize;
         };
         $app;
     };
@@ -152,7 +154,7 @@ sub redirect {
     my ($self, $url, $status) = @_;
     my $res = $self->create_response;
     $res->redirect($url, $status);
-    $res->finalize;
+    return $res;
 }
 
 sub res_404 {
@@ -161,7 +163,7 @@ sub res_404 {
         404,
         { 'Content-Type' => 'text/plain' },
         "not found"
-    )->finalize;
+    );
 }
 
 sub render {
@@ -176,7 +178,7 @@ sub render {
         $opts{status} || 200,
         $opts{headers} || { 'Content-Type' => 'text/html; charset=' . $self->encoding },
         $self->encode_body($body),
-    )->finalize;
+    );
 }
 
 sub encode_body {
